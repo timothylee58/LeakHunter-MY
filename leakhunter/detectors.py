@@ -133,16 +133,33 @@ def detect_bank_account(text: str) -> list[Match]:
 
 
 # ---------------------------------------------------------------------------
-# Malaysian mobile  — (+60|0)1X followed by 7-8 digits
+# Malaysian mobile  — (+60|0)1X followed by 7-8 digits (separators allowed)
 # ---------------------------------------------------------------------------
-_PHONE_RE = re.compile(r"(?<!\d)(\+?60|0)(1[0-9])(\d{7,8})(?!\d)")
+# Allow optional spaces/hyphens between digit groups after the prefix.
+_PHONE_RE = re.compile(
+    r"(?<!\d)"
+    r"(\+?60|0)"          # country prefix
+    r"(1[0-9])"           # 01X
+    r"[-\s]?"             # optional separator
+    r"(\d{3,4})"          # first digit group
+    r"[-\s]?"             # optional separator
+    r"(\d{4})"            # last 4 digits
+    r"(?!\d)"
+)
 
 
 def detect_phone(text: str) -> list[Match]:
-    """Detect Malaysian mobile numbers."""
+    """Detect Malaysian mobile numbers (bare and formatted with separators)."""
     results: list[Match] = []
     for m in _PHONE_RE.finditer(text):
-        results.append(Match("MY_PHONE", m.group(0), m.span()))
+        # Validate total digit count is 9–10 (after stripping separators)
+        raw = m.group(0)
+        digits = re.sub(r"[^\d]", "", raw)
+        # Remove country prefix digits to count subscriber digits
+        prefix = m.group(1).lstrip("+")  # "60" or "0"
+        subscriber_digits = digits[len(prefix):]
+        if 9 <= len(subscriber_digits) <= 10:
+            results.append(Match("MY_PHONE", raw, m.span()))
     return results
 
 

@@ -1,20 +1,18 @@
-"""Fake customer / payment models — all data is synthetic."""
+"""Fake customer model — all data is synthetic."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
 class Customer:
+    """Malaysian customer with a safe __repr__ that never exposes PII."""
     name: str
-    ic_number: str       # Malaysian IC (fake)
-    email: str
-    phone: str
+    ic_number: str = field(repr=False)       # Malaysian IC (fake)
+    card_number: str = field(repr=False)     # Payment card (fake)
+    bank_account: str = field(repr=False)    # Bank account (fake)
+    mobile: str = field(repr=False)          # MY mobile (fake)
+    email: str = field(repr=False)
 
-
-@dataclass
-class PaymentRecord:
-    customer: Customer
-    card_number: str     # Fake payment card
-    bank_account: str    # Fake bank account number
-    amount_myr: float
+    def __repr__(self) -> str:  # noqa: D105
+        return f"Customer(name={self.name!r})"

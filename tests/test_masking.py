@@ -6,9 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from leakhunter.masking import RedactFilter, SafeFormatter, mask, mask_file, mask_pii
+from leakhunter.masking import RedactFilter, RedactingFilter, SafeFormatter, mask, mask_file, mask_findings, mask_pii
 from leakhunter.report import render_markdown
 from leakhunter.scanner import scan_file
+from tests.conftest import CANARY_CARD, CANARY_EMAIL, CANARY_IC, CANARY_PHONE
 
 
 class TestMask:
@@ -17,7 +18,7 @@ class TestMask:
         ic_findings = [f for f in findings if f.match.pii_type == "MYKAD"]
         assert ic_findings, "Leaky log must contain MYKAD"
         line = ic_findings[0].raw_line
-        masked_line = mask(line, ic_findings)
+        masked_line = mask_findings(line, ic_findings)
         assert "[IC-REDACTED]" in masked_line
         assert ic_findings[0].match.value not in masked_line
 
@@ -26,7 +27,7 @@ class TestMask:
         card_findings = [f for f in findings if f.match.pii_type == "PAYMENT_CARD"]
         assert card_findings
         line = card_findings[0].raw_line
-        masked_line = mask(line, card_findings)
+        masked_line = mask_findings(line, card_findings)
         assert "[CARD-REDACTED]" in masked_line
 
     def test_email_masked(self, leaky_log: Path) -> None:
@@ -34,13 +35,13 @@ class TestMask:
         email_findings = [f for f in findings if f.match.pii_type == "EMAIL"]
         assert email_findings
         line = email_findings[0].raw_line
-        masked_line = mask(line, email_findings)
+        masked_line = mask_findings(line, email_findings)
         assert "[EMAIL-REDACTED]" in masked_line
 
     def test_original_value_absent_after_mask(self, leaky_log: Path) -> None:
         findings = scan_file(leaky_log)
         for f in findings:
-            masked = mask(f.raw_line, [f])
+            masked = mask_findings(f.raw_line, [f])
             assert f.match.value not in masked, (
                 f"Value {f.match.value!r} still present after masking"
             )
@@ -75,6 +76,23 @@ class TestMaskPii:
         assert "[PHONE-REDACTED]" in result
         assert "901123-08-7654" not in result
 
+    def test_canary_sentence_contains_no_detectable_pii(self) -> None:
+        """mask_pii on a sentence containing every CANARY value leaves no raw PII."""
+        sentence = (
+            f"ic={CANARY_IC} card={CANARY_CARD} "
+            f"email={CANARY_EMAIL} mobile={CANARY_PHONE}"
+        )
+        result = mask_pii(sentence)
+        assert CANARY_IC    not in result, "IC must be redacted"
+        assert CANARY_CARD  not in result, "card must be redacted"
+        assert CANARY_EMAIL not in result, "email must be redacted"
+        assert CANARY_PHONE not in result, "phone must be redacted"
+        # Verify tokens are present
+        assert "[IC-REDACTED]"    in result
+        assert "[CARD-REDACTED]"  in result
+        assert "[EMAIL-REDACTED]" in result
+        assert "[PHONE-REDACTED]" in result
+
 
 class TestSafeFormatter:
     def test_redacts_pii_in_log_record(self) -> None:
@@ -103,7 +121,7 @@ class TestSafeFormatter:
 
 class TestRedactFilter:
     def test_mutates_record_msg(self) -> None:
-        f = RedactFilter()
+        f = RedactingFilter()
         record = logging.LogRecord(
             name="test", level=logging.INFO,
             pathname="test.py", lineno=1,
@@ -117,7 +135,7 @@ class TestRedactFilter:
         assert "canary@example.my" not in record.msg
 
     def test_allows_clean_record(self) -> None:
-        f = RedactFilter()
+        f = RedactingFilter()
         record = logging.LogRecord(
             name="test", level=logging.DEBUG,
             pathname="test.py", lineno=1,
@@ -126,6 +144,23 @@ class TestRedactFilter:
         )
         assert f.filter(record) is True
         assert record.msg == "cache cleared"
+
+    def test_scrubs_exc_text(self) -> None:
+        """exc_text containing PII must be redacted."""
+        f = RedactingFilter()
+        record = logging.LogRecord(
+            name="test", level=logging.ERROR,
+            pathname="test.py", lineno=1,
+            msg="payment failed",
+            args=(), exc_info=None,
+        )
+        record.exc_text = "PaymentError: Declined card=4111 1111 1111 1111"
+        f.filter(record)
+        assert "4111 1111 1111 1111" not in record.exc_text
+        assert "[CARD-REDACTED]" in record.exc_text
+
+    def test_old_name_alias_still_works(self) -> None:
+        assert RedactFilter is RedactingFilter
 
 
 class TestMaskFile:

@@ -1,76 +1,77 @@
-"""Intentionally leaky payment processor — used to demonstrate LeakHunter."""
+"""Intentionally leaky payment service — FIXED version with root-cause fixes."""
 from __future__ import annotations
 
-from pathlib import Path
+import uuid
 
-from sample_app.logging_setup import configure
-from sample_app.models import Customer, PaymentRecord
+from sample_app.logging_setup import get_logger
+from sample_app.models import Customer
+from leakhunter.masking import mask, mask_pii
 
-logger = configure(Path("logs"))
-
-# ---------------------------------------------------------------------------
-# FAKE data — no real persons, no real cards, no real accounts
-# ---------------------------------------------------------------------------
-_FAKE_CUSTOMER = Customer(
-    name="Siti Binti Demo",
-    ic_number="850312-14-5678",   # fake IC — date 1985-03-12, PB=14 (Pahang)
-    email="siti.demo@example.my",
-    phone="+60123456789",         # fake MY mobile
-)
-
-_FAKE_PAYMENT = PaymentRecord(
-    customer=_FAKE_CUSTOMER,
-    card_number="4111111111111111",  # Visa test card (Luhn-valid, fake)
-    bank_account="1234567890",       # fake — 10 digits, near keyword below
-    amount_myr=250.00,
-)
+log = get_logger("payments")
 
 
-def process_payment(record: PaymentRecord) -> bool:
-    """Simulate payment processing with exactly 4 planted PII leaks."""
-    # LEAK 1 — IC number in info log
-    logger.info("Processing payment customer_ic=%s", record.customer.ic_number)
+class PaymentError(Exception):
+    """Raised when a payment is declined; carries only a reference id."""
 
-    # LEAK 2 — email + phone together in debug log
-    logger.debug(
-        "Customer contact email=%s phone=%s",
-        record.customer.email,
-        record.customer.phone,
-    )
 
-    try:
-        if record.amount_myr <= 0:
-            raise ValueError("Amount must be positive")
+class PaymentService:
+    """Processes payments — all four original leaks are fixed at source."""
 
-        # LEAK 3 — card number on success path
-        logger.info(
-            "Payment approved card=%s amount=%.2f MYR",
-            record.card_number,
-            record.amount_myr,
-        )
+    def __init__(self, base_callback_url: str = "https://pay.example.my/cb") -> None:
+        self._base = base_callback_url
+
+    def verify_ic(self, customer: Customer) -> bool:
+        """Validate the customer's IC number (stub).
+
+        FIX 1 — log the masked IC value, not the raw ic_number.
+        """
+        masked_ic = mask("MYKAD", customer.ic_number)
+        log.info("Verifying IC %s", masked_ic)
+        return bool(customer.ic_number)
+
+    def prepare_charge(self, customer: Customer, amount_myr: float) -> dict:
+        """Build a charge payload (stub).
+
+        FIX 2 — Customer.__repr__ now returns only the name, so
+        log.debug(f"Processing {customer}") is safe.
+        """
+        log.debug("Processing %s", customer)   # safe: repr omits PII fields
+        return {"card": customer.card_number, "amount": amount_myr}
+
+    def charge(self, customer: Customer, amount_myr: float) -> bool:
+        """Execute the charge; raise PaymentError on invalid amount.
+
+        FIX 3 — PaymentError carries a ref_id only, never the payload.
+        The caller catches PaymentError and logs the ref_id.
+        """
+        self.prepare_charge(customer, amount_myr)
+        if amount_myr <= 0:
+            ref_id = uuid.uuid4().hex[:8]
+            raise PaymentError(f"Declined ref={ref_id}")
         return True
-    except ValueError as exc:
-        # LEAK 4 — bank account on error path
-        logger.error(
-            "Payment failed account=%s error=%s",
-            record.bank_account,
-            exc,
-        )
-        return False
 
+    def notify_callback(self, customer: Customer) -> None:
+        """Fire the post-payment webhook.
 
-def run_demo() -> None:
-    """Run two transactions: one approved, one rejected (triggers LEAK 4)."""
-    process_payment(_FAKE_PAYMENT)
+        FIX 4 — build the real URL (used for the HTTP call, not logged),
+        and a separate masked URL for logging.
+        """
+        real_url = f"{self._base}?card={customer.card_number}&ic={customer.ic_number}"
+        masked_card = mask("PAYMENT_CARD", customer.card_number)
+        masked_ic   = mask("MYKAD", customer.ic_number)
+        log_url = f"{self._base}?card={masked_card}&ic={masked_ic}"
+        log.info("Callback sent: %s", log_url)
+        # real_url would be passed to the HTTP client here (not shown)
+        _ = real_url
 
-    bad = PaymentRecord(
-        customer=_FAKE_CUSTOMER,
-        card_number=_FAKE_PAYMENT.card_number,
-        bank_account=_FAKE_PAYMENT.bank_account,
-        amount_myr=-1.0,
-    )
-    process_payment(bad)
-
-
-if __name__ == "__main__":
-    run_demo()
+    def process(self, customer: Customer, amount_myr: float) -> bool:
+        """Full payment flow: verify, charge, notify.  Returns True on success."""
+        self.verify_ic(customer)
+        try:
+            ok = self.charge(customer, amount_myr)
+        except PaymentError as exc:
+            log.exception("payment failed: %s", exc)   # exc carries only ref_id
+            return False
+        if ok:
+            self.notify_callback(customer)
+        return ok
