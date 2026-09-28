@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name            = "leakhunter-my"
+version         = "0.1.0"
+description     = "Find Malaysian PII leaking into application logs"
+readme          = "README.md"
+requires-python = ">=3.11"
+dependencies    = [
+    "typer>=0.12",
+    "rich>=13",
+]
+
+[project.scripts]
+leakhunter = "leakhunter.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["leakhunter*", "sample_app*"]
+
+[tool.pytest.ini_options]
+testpaths       = ["tests"]
+addopts         = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["leakhunter"]
+omit   = ["tests/*", "sample_app/*"]

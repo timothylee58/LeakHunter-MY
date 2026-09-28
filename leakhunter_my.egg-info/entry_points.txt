@@ -1,0 +1,2 @@
+[console_scripts]
+leakhunter = leakhunter.cli:main

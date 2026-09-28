@@ -109,10 +109,10 @@ def detect_card(text: str) -> list[Match]:
 # Bank account  — 10-16 digits near context keywords
 # ---------------------------------------------------------------------------
 _BANK_CONTEXT_RE = re.compile(
-    r"(?i)(?:acct|account|akaun|bank|no\.?\s*acc|no\.?\s*akaun)"
+    r"(?:acct|account|akaun|bank|no\.?\s*acc|no\.?\s*akaun)"
     r".{0,30}?(\b\d{10,16}\b)"
-    r"|(\b\d{10,16}\b).{0,30}?(?i)(?:acct|account|akaun|bank)",
-    re.DOTALL,
+    r"|(\b\d{10,16}\b).{0,30}?(?:acct|account|akaun|bank)",
+    re.IGNORECASE | re.DOTALL,
 )
 
 
