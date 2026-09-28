@@ -153,43 +153,28 @@ def _mask_value(pii_type: PiiType) -> str:
 
 
 def mask_findings(text: str, findings: list) -> str:  # type: ignore[type-arg]
-    """Return *text* with every pre-computed Finding span replaced.
+    """Return *text* with every PII value from *findings* replaced.
 
-    Accepts the legacy Finding dataclass from scanner.py.
+    Re-searches for each value inside *text* so spans are always correct
+    regardless of whether *text* is the full raw line or an extracted field.
     """
-    sorted_findings = sorted(findings, key=lambda f: f.match.span[0], reverse=True)
-    chars = list(text)
-    for f in sorted_findings:
-        start, end = f.match.span
+    result = text
+    # Process longest values first to avoid partial overlaps
+    for f in sorted(findings, key=lambda f: len(f.match.value), reverse=True):
         token = _BULK_TOKEN.get(f.match.pii_type, "[REDACTED]")
-        chars[start:end] = list(token)
-    return "".join(chars)
+        result = result.replace(f.match.value, token)
+    return result
 
 
 def mask_file(path: Path, findings: list) -> Path:  # type: ignore[type-arg]
     """Write a masked copy of *path* to *path*.masked and return that path.
 
+    Uses ``mask_pii`` on every line so all PII is removed even if spans
+    were computed against an extracted JSON field rather than the raw line.
     Original file is never modified.
     """
-    file_findings = [f for f in findings if f.log_path.resolve() == path.resolve()]
     original = path.read_text(encoding="utf-8", errors="replace")
-
-    lines = original.splitlines(keepends=True)
-    by_line: dict[int, list] = {}
-    for f in file_findings:
-        by_line.setdefault(f.log_line_no, []).append(f)
-
-    masked_lines: list[str] = []
-    for lineno, line in enumerate(lines, start=1):
-        line_findings = by_line.get(lineno, [])
-        if line_findings:
-            line_no_newline = line.rstrip("\n\r")
-            masked = mask_findings(line_no_newline, line_findings)
-            ending = line[len(line_no_newline):]
-            masked_lines.append(masked + ending)
-        else:
-            masked_lines.append(line)
-
+    masked_lines = [mask_pii(line) for line in original.splitlines(keepends=True)]
     out_path = path.with_suffix(path.suffix + ".masked")
     out_path.write_text("".join(masked_lines), encoding="utf-8")
     return out_path

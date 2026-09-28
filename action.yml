@@ -1,0 +1,56 @@
+name: "LeakHunter MY"
+description: "Scan source code and logs for Malaysian PII leaks (PDPA 2010)"
+author: "LeakHunter MY"
+
+branding:
+  icon: "shield"
+  color: "red"
+
+inputs:
+  path:
+    description: "Directory to scan (source code)"
+    required: false
+    default: "."
+  logs:
+    description: "Log directory to scan (*.jsonl)"
+    required: false
+    default: ""
+  fail-on:
+    description: "Fail if any finding meets this severity: high|medium|low"
+    required: false
+    default: "high"
+  sarif-output:
+    description: "Path to write SARIF report (upload to GitHub Code Scanning)"
+    required: false
+    default: "leakhunter.sarif"
+
+outputs:
+  findings-count:
+    description: "Total number of PII findings"
+    value: ${{ steps.scan.outputs.findings-count }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install LeakHunter MY
+      shell: bash
+      run: pip install leakhunter-my --quiet
+
+    - name: Run scan
+      id: scan
+      shell: bash
+      run: |
+        ARGS="${{ inputs.path }}"
+        if [ -n "${{ inputs.logs }}" ]; then
+          ARGS="$ARGS --logs ${{ inputs.logs }}"
+        fi
+        if [ -n "${{ inputs.sarif-output }}" ]; then
+          ARGS="$ARGS --format sarif --output ${{ inputs.sarif-output }}"
+        fi
+        leakhunter scan $ARGS --fail-on ${{ inputs.fail-on }}
+
+    - name: Upload SARIF to GitHub Code Scanning
+      if: always() && inputs.sarif-output != ''
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-output }}

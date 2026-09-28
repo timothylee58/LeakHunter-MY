@@ -1,0 +1,8 @@
+- id: leakhunter-source
+  name: LeakHunter MY — source scan
+  description: Scan staged Python files for PII leaks before commit.
+  language: python
+  entry: leakhunter scan
+  args: [--fail-on, high]
+  types: [python]
+  pass_filenames: false

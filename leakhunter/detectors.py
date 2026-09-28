@@ -1,7 +1,9 @@
 """PII detectors for Malaysian personal data types."""
 from __future__ import annotations
 
+import base64
 import re
+import urllib.parse
 from dataclasses import dataclass
 from typing import Literal
 
@@ -177,13 +179,86 @@ def detect_email(text: str) -> list[Match]:
 
 
 # ---------------------------------------------------------------------------
+# Allowlist — known-safe test values that must never trigger findings
+# ---------------------------------------------------------------------------
+
+_ALLOWLIST: set[str] = set()
+
+
+def add_to_allowlist(*values: str) -> None:
+    """Register values that should never be reported as PII (e.g. canary test data)."""
+    _ALLOWLIST.update(values)
+
+
+# ---------------------------------------------------------------------------
+# Decode helpers — strip common encoding layers before detection
+# ---------------------------------------------------------------------------
+
+def _url_decode(text: str) -> str:
+    """Return URL-decoded version of *text*, or original on failure."""
+    try:
+        decoded = urllib.parse.unquote(text)
+        return decoded if decoded != text else text
+    except Exception:
+        return text
+
+
+def _base64_segments(text: str) -> list[str]:
+    """Return any base64-decodable segments found in *text*.
+
+    Scans for runs of base64 characters long enough to be meaningful (>=16)
+    and attempts to decode them as UTF-8.
+    """
+    results: list[str] = []
+    for m in re.finditer(r"[A-Za-z0-9+/]{16,}={0,2}", text):
+        raw = m.group(0)
+        # Pad to multiple of 4
+        padded = raw + "=" * (-len(raw) % 4)
+        try:
+            decoded = base64.b64decode(padded).decode("utf-8", errors="strict")
+            results.append(decoded)
+        except Exception:
+            pass
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Aggregate
 # ---------------------------------------------------------------------------
 
-def run_all(text: str) -> list[Match]:
-    """Run every detector and return all matches, sorted by position."""
+def run_all(text: str, *, check_encoded: bool = True) -> list[Match]:
+    """Run every detector on *text* (and its decoded forms if check_encoded).
+
+    Applies URL-decoding and base64 segment extraction before detection so
+    PII that has been encoded in transit is still caught.
+
+    Matches whose raw value appears in the allowlist are suppressed.
+    """
+    _fns = (detect_mykad, detect_card, detect_bank_account, detect_phone, detect_email)
+
+    seen_spans: set[tuple[int, int]] = set()
     matches: list[Match] = []
-    for fn in (detect_mykad, detect_card, detect_bank_account, detect_phone, detect_email):
-        matches.extend(fn(text))
+
+    def _collect(src: str) -> None:
+        for fn in _fns:
+            for m in fn(src):
+                if m.value in _ALLOWLIST:
+                    continue
+                # Only deduplicate within the same text (span-based)
+                if src is text and m.span in seen_spans:
+                    continue
+                if src is text:
+                    seen_spans.add(m.span)
+                matches.append(m)
+
+    _collect(text)
+
+    if check_encoded:
+        url_decoded = _url_decode(text)
+        if url_decoded != text:
+            _collect(url_decoded)
+        for segment in _base64_segments(text):
+            _collect(segment)
+
     matches.sort(key=lambda x: x.span[0])
     return matches

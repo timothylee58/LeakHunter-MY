@@ -10,79 +10,130 @@ Provides-Extra: dev
 Requires-Dist: pytest>=8; extra == "dev"
 Requires-Dist: pytest-cov; extra == "dev"
 
-# LeakHunter MY 🔍
+# LeakHunter MY
 
-> Find Malaysian PII leaking into your application logs — deterministic regex + Luhn, fully offline, PDPA 2010 tagged.
+> Deterministic, offline PII leak detection for Malaysian application logs — find IC numbers, payment cards, bank accounts, mobile numbers, and email addresses before your PDPA auditor does.
 
-## Quick start
+---
 
-```bash
-pip install -e ".[dev]"
+## Problem
 
-# generate sample leaky logs
-python -m sample_app.payments
+Malaysian applications routinely write PII into logs: IC numbers in debug traces, card numbers in exception messages, full customer objects in request logs. These leaks violate **PDPA 2010 Section 9 (Security Principle)** and are invisible until an audit or breach. LeakHunter MY catches them at CI time, traces each leak to its source line, and shows you how to fix it.
 
-# scan and report
-leakhunter scan logs/
+---
 
-# fix: write masked copies of every leaky log
-leakhunter scan logs/ --fix
+## How It Works
 
-# scan + write JSON report
-leakhunter scan logs/ --report reports/leaks.json
+**1. Canary customer** — tests create a `Customer` with unique fake PII values (IC, card, bank account, mobile, email). When any canary value appears in `logs/app.jsonl`, a leak is proven — not guessed.
 
-# CI gate — exit 1 if HIGH severity found
-leakhunter scan logs/ --fail-on-high
-```
+**2. Detectors** — deterministic regex + validation (Luhn check for cards, date + birthplace-code validation for IC numbers). No LLM, no network calls.
 
-## What it detects
+**3. Tracer** — every JSON log line carries `pathname` + `lineno`. LeakHunter reads those fields back to show the exact source line that produced the leak, plus a code snippet.
 
-| PII Type      | Method                              | PDPA Principle |
-|---------------|-------------------------------------|----------------|
-| MyKad IC      | Regex + date validation + PB code   | S9 — Security  |
-| Payment card  | 13–19 digits, prefix + Luhn         | S9 — Security  |
-| Bank account  | 10–16 digits near banking keywords  | S9 — Security  |
-| MY mobile     | `(+60\|0)1X` + 7–8 digits           | S7 — Notice    |
-| Email         | RFC-5321 simplified regex           | S7 — Notice    |
+**4. Report** — Rich console table (masked values only), Markdown receipt, optional JSON report. `--fail-on high` exits 1 for CI gates.
 
-## Severity scoring
-
-```
-score  = sensitivity × exposure_multiplier
-HIGH   ≥ 3.0   (IC/card/bank at any level; IC/card/bank at ERROR = 4.5)
-MEDIUM ≥ 2.0   (phone at ERROR)
-LOW    < 2.0   (email at INFO)
-```
+---
 
 ## Architecture
 
 ```
-leakhunter/
-  detectors.py   — regex patterns, Luhn, IC validation
-  severity.py    — scoring + PDPA tags
-  scanner.py     — file / directory scan, Finding dataclass
-  tracer.py      — JSON log → app source file:line
-  masking.py     — in-place redaction to *.masked copies
-  report.py      — Rich console table + JSON report
-  cli.py         — Typer CLI (scan, demo)
-
-sample_app/
-  models.py        — fake Customer + PaymentRecord
-  logging_setup.py — JSON-line logger with pathname + lineno
-  payments.py      — intentionally leaky processor (demo target)
-
-tests/
-  conftest.py      — canary fixture (unique fake PII)
-  test_detectors.py
-  test_payments.py — canary integration: leak → detect
-  test_masking.py  — mask → re-scan → zero findings
+tests/ (CANARY fixture)
+    │
+    │  PaymentService.process(CANARY, amount)
+    ▼
+logs/app.jsonl  ◄──── JSON lines with ts/level/logger/pathname/lineno/message/exc_text
+    │
+    │  leakhunter scan sample_app [--logs logs/]
+    ▼
+leakhunter/detectors.py   — regex + Luhn + IC date/PB validation
+    │
+leakhunter/scanner.py     — scan_logs() + scan_source() (AST-aware)
+    │
+leakhunter/tracer.py      — pathname:lineno → source snippet via linecache
+    │
+leakhunter/severity.py    — sensitivity × exposure → HIGH/MEDIUM/LOW + PDPA tag
+    │
+leakhunter/report.py      — Rich table  ·  Markdown receipt  ·  JSON report
+    │
+leakhunter/masking.py     — format-preserving masks  ·  RedactingFilter
 ```
 
-## Running tests
+---
+
+## Quick Start
 
 ```bash
-pytest -v
-pytest --tb=short tests/test_masking.py   # masking only
+# Install
+pip install -e ".[dev]"
+
+# Run tests (generates logs/app.jsonl as a side-effect)
+pytest -q
+
+# Scan sample_app source + logs — fail CI if HIGH findings exist
+leakhunter scan sample_app --fail-on high
+
+# Generate a before/after Markdown receipt
+leakhunter scan sample_app --receipt reports/receipt_before.md
 ```
 
-> **All PII values in this repository are entirely synthetic.** No real persons, real cards, or real accounts are used anywhere.
+---
+
+## Detectors
+
+| PII Type | Pattern | Validation |
+|----------|---------|------------|
+| `MYKAD` | `YYMMDD-PB-####` | Date plausibility; PB codes 00 and 17–20 rejected (never issued) |
+| `PAYMENT_CARD` | 13–19 digits, spaces/dashes allowed | Major-network prefix (Visa/MC/Amex/Discover) + Luhn checksum |
+| `BANK_ACCOUNT` | 10–16 digits | Must appear within 30 chars of a banking keyword (`acct`, `account`, `akaun`, `bank`) |
+| `MY_PHONE` | `(+60\|60\|0)1X` + 7–8 digits | Prefix must be `01X` (Malaysian mobile range) |
+| `EMAIL` | RFC-5321 simplified | Local-part + `@` + domain with valid TLD |
+
+---
+
+## Severity Scoring
+
+```
+score = sensitivity × exposure_multiplier
+
+Sensitivity:  MYKAD / PAYMENT_CARD / BANK_ACCOUNT = 3.0
+              MY_PHONE = 2.0  |  EMAIL = 1.0
+
+Exposure:     ERROR / CRITICAL / exc_text present = 1.5
+              WARNING = 1.2  |  INFO / DEBUG = 1.0
+
+HIGH   ≥ 3.0   MEDIUM ≥ 2.0   LOW < 2.0
+```
+
+PDPA 2010 — Security Principle (Section 9) is tagged on every finding.
+
+---
+
+## Masking
+
+`masking.mask(pii_type, value)` returns a format-preserving token:
+
+| Type | Input | Output |
+|------|-------|--------|
+| MYKAD | `900101-14-5678` | `******-**-5678` |
+| PAYMENT_CARD | `4111 1111 1111 1111` | `**** **** **** 1111` |
+| BANK_ACCOUNT | `1234567890` | `******7890` |
+| MY_PHONE | `+6012-345 6789` | `+60****6789` |
+| EMAIL | `user@example.my` | `u***@example.my` |
+
+`RedactingFilter` can be attached to any Python logger as defence-in-depth; it scrubs both `message` and `exc_text` before any handler writes to disk.
+
+---
+
+## Limitations
+
+- Regex-based — does not understand data flow; a PII value stored in an intermediate variable and later formatted into a string may evade detection until it appears in a log line.
+- Malaysian formats only — IC, MY mobile prefix, MYR-context bank accounts. Internationalisation is a roadmap item.
+- Not legal advice — passing this scan does not guarantee PDPA compliance. Consult a qualified data protection officer.
+
+---
+
+## Roadmap
+
+- **Pre-commit hook** — run `leakhunter scan` on staged `.py` files before every commit.
+- **SARIF output** — emit GitHub Code Scanning–compatible SARIF so findings appear inline in pull requests.
+- **ELK / Splunk log ingestion** — a Logstash filter / Splunk TA that applies `RedactingFilter` logic to streamed log events before indexing.

@@ -9,6 +9,7 @@ from rich.console import Console
 
 from leakhunter.masking import mask_file
 from leakhunter.report import render_console, render_json, write_receipt
+from leakhunter.sarif import write_sarif
 from leakhunter.scanner import scan_dir, scan_file, scan_source
 
 app = typer.Typer(
@@ -42,6 +43,14 @@ def scan(
     fail_on: Optional[str] = typer.Option(
         None, "--fail-on",
         help="Exit 1 if any finding >= this severity: high|medium|low.",
+    ),
+    fmt: Optional[str] = typer.Option(
+        None, "--format",
+        help="Output format for --output: json|sarif (default: json).",
+    ),
+    output: Optional[Path] = typer.Option(
+        None, "--output", "-o",
+        help="Write structured report to this path (JSON or SARIF).",
     ),
     # Legacy options kept for backwards compatibility
     fix: bool = typer.Option(False, "--fix", hidden=True),
@@ -77,6 +86,14 @@ def scan(
 
     if report:
         render_json(findings, report)
+
+    if output:
+        fmt_lower = (fmt or "json").lower()
+        if fmt_lower == "sarif":
+            write_sarif(findings, output)
+            console.print(f"[dim]SARIF report -> {output}[/dim]")
+        else:
+            render_json(findings, output)
 
     if receipt or receipt_before:
         write_receipt(findings, receipt or receipt_before,  # type: ignore[arg-type]
