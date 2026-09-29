@@ -2,6 +2,17 @@ Metadata-Version: 2.4
 Name: leakhunter-my
 Version: 0.1.0
 Summary: Find Malaysian PII leaking into application logs
+License: MIT
+Keywords: pii,security,pdpa,devsecops,malaysia
+Classifier: Development Status :: 4 - Beta
+Classifier: Environment :: Console
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Security
+Classifier: Topic :: Software Development :: Quality Assurance
 Requires-Python: >=3.11
 Description-Content-Type: text/markdown
 Requires-Dist: typer>=0.12

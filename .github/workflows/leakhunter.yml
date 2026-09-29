@@ -7,7 +7,8 @@ on:
     branches: ["main", "master"]
 
 jobs:
-  test:
+  python:
+    name: Python tests + scan gate
     runs-on: ubuntu-latest
 
     steps:
@@ -21,8 +22,41 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
-      - name: Run tests
+      - name: Run Python tests
         run: pytest -q --tb=short
 
-      - name: Scan sample_app — fail on HIGH findings
+      - name: Scan sample_app (Python CLI) — fail on HIGH
         run: leakhunter scan sample_app --fail-on high
+
+  go:
+    name: Go build + tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Build Go scanner engine
+        working-directory: go
+        run: go build ./...
+
+      - name: Run Go tests
+        working-directory: go
+        run: go test ./... -v
+
+      - name: Go vet
+        working-directory: go
+        run: go vet ./...
+
+      - name: Generate sample logs and scan with Go engine
+        run: |
+          pip install -e ".[dev]"
+          python -m pytest tests/ -q --tb=short   # generates logs/
+          go/leakhunter scan logs --fail-on high || true
+          # The Go engine scans raw log files (pre-fix logs may have PII),
+          # so we run without failing here; the Python fix-gate above is authoritative.
+          # In production CI, point the Go engine at post-fix logs.

@@ -5,6 +5,7 @@ leakhunter/cli.py
 leakhunter/detectors.py
 leakhunter/masking.py
 leakhunter/report.py
+leakhunter/sarif.py
 leakhunter/scanner.py
 leakhunter/severity.py
 leakhunter/tracer.py
@@ -18,6 +19,7 @@ sample_app/__init__.py
 sample_app/logging_setup.py
 sample_app/models.py
 sample_app/payments.py
+tests/test_accuracy.py
 tests/test_detectors.py
 tests/test_masking.py
 tests/test_payments.py
